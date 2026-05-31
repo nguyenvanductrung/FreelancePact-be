@@ -1,0 +1,234 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  CLIENT
+  FREELANCER
+}
+
+enum ContractStatus {
+  DRAFT
+  PENDING_SIGNATURE
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum MilestoneStatus {
+  PENDING
+  ACTIVE
+  SUBMITTED
+  REVISION_REQUESTED
+  COMPLETED
+}
+
+enum PaymentTerm {
+  ESCROW_MILESTONE
+  ESCROW_FULL
+  NET_15
+  NET_30
+}
+
+enum MessageType {
+  TEXT
+  FILE
+  SYSTEM
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model User {
+  id                       String   @id @default(cuid())
+  email                    String   @unique
+  password                 String
+  fullName                 String
+  avatarUrl                String?
+  role                     Role     @default(CLIENT)
+  isKycVerified            Boolean  @default(false)
+  isOnline                 Boolean  @default(false)
+  title                    String?
+  location                 String?
+  bio                      String?
+  hourlyRate               Int?
+  availabilityHoursPerWeek Int?
+  skills                   String[]
+  successRate              Float    @default(0)
+  totalContracts           Int      @default(0)
+  rating                   Float    @default(0)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  badges          Badge[]
+  portfolioItems  PortfolioItem[]
+  experience      Experience[]
+  clientContracts    Contract[]     @relation("ClientContracts")
+  freelancerContracts Contract[]    @relation("FreelancerContracts")
+  sentMessages    Message[]
+  refreshTokens   RefreshToken[]
+  notifications   Notification[]
+}
+
+model Contract {
+  id              String         @id @default(cuid())
+  title           String
+  partnerName     String
+  description     String?
+  status          ContractStatus @default(DRAFT)
+  totalValue      Decimal        @db.Decimal(15, 2)
+  escrowedAmount  Decimal        @default(0) @db.Decimal(15, 2)
+  startDate       String?
+  endDate         String?
+  progressPercent Int            @default(0)
+  paymentTerm     PaymentTerm    @default(ESCROW_MILESTONE)
+  specialTerms    String?
+  freelancerId    String
+  clientId        String
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  freelancer User      @relation("FreelancerContracts", fields: [freelancerId], references: [id])
+  client     User      @relation("ClientContracts", fields: [clientId], references: [id])
+  milestones Milestone[]
+  messages   Message[]
+  payments   Payment[]
+}
+
+model Milestone {
+  id              String          @id @default(cuid())
+  name            String
+  budget          Int
+  deadline        String
+  status          MilestoneStatus @default(PENDING)
+  progressPercent Int             @default(0)
+  submissionNote  String?
+  rejectionNote   String?
+  submittedAt     DateTime?
+  contractId      String
+  createdAt       DateTime        @default(now())
+
+  contract Contract        @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  payments Payment[]
+  files    MilestoneFile[]
+}
+
+model MilestoneFile {
+  id          String   @id @default(cuid())
+  url         String
+  milestoneId String
+  createdAt   DateTime @default(now())
+
+  milestone Milestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+}
+
+model Message {
+  id            String      @id @default(cuid())
+  contractId    String
+  senderId      String
+  senderName    String
+  senderAvatar  String?
+  type          MessageType @default(TEXT)
+  text          String?
+  fileUrl       String?
+  fileName      String?
+  fileSizeBytes Int?
+  milestoneNote String?
+  createdAt     DateTime    @default(now())
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  sender   User     @relation(fields: [senderId], references: [id])
+}
+
+model Payment {
+  id          String        @id @default(cuid())
+  contractId  String
+  milestoneId String?
+  amount      Int
+  status      PaymentStatus @default(PENDING)
+  createdAt   DateTime      @default(now())
+  completedAt DateTime?
+
+  contract  Contract   @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  milestone Milestone? @relation(fields: [milestoneId], references: [id])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Badge {
+  id     String @id @default(cuid())
+  label  String
+  icon   String
+  userId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PortfolioItem {
+  id          String  @id @default(cuid())
+  title       String
+  description String?
+  imageUrl    String?
+  tag         String?
+  userId      String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Experience {
+  id          String  @id @default(cuid())
+  role        String
+  company     String
+  startYear   Int
+  endYear     Int?
+  description String?
+  userId      String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum NotificationType {
+  MILESTONE_SUBMITTED
+  MILESTONE_APPROVED
+  MILESTONE_REJECTED
+  CONTRACT_SIGNED
+  DISPUTE_OPENED
+  PAYMENT_RELEASED
+  NFT_MINTED
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String
+  isRead    Boolean          @default(false)
+  metadata  Json?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
