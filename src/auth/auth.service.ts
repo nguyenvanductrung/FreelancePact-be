@@ -7,6 +7,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { OAuth2Client } from 'google-auth-library';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -15,11 +16,17 @@ import { JwtPayload } from './strategies/jwt.strategy';
 
 @Injectable()
 export class AuthService {
+  private googleClient: OAuth2Client;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
-  ) {}
+  ) {
+    this.googleClient = new OAuth2Client(
+      this.config.get<string>('GOOGLE_CLIENT_ID'),
+    );
+  }
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -218,5 +225,65 @@ export class AuthService {
         data: { isOnline: false },
       }),
     ]);
+  }
+
+  // ─── Google Login ──────────────────────────────────────────────────────────
+
+  /**
+   * Verifies Google ID Token, registers user if new, and returns JWT tokens.
+   */
+  async loginWithGoogle(accessToken: string): Promise<AuthTokensDto> {
+    try {
+      const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!response.ok) {
+        throw new UnauthorizedException('Token Google không hợp lệ');
+      }
+      const payload = await response.json();
+
+      const { email, name, picture } = payload;
+      if (!email) {
+        throw new UnauthorizedException('Token Google không chứa thông tin email');
+      }
+
+      let user = await this.prisma.user.findUnique({
+        where: { email },
+      });
+
+      if (!user) {
+        // Create new user with random password
+        const randomPassword = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        const hashedPassword = await bcrypt.hash(randomPassword, 12);
+
+        user = await this.prisma.user.create({
+          data: {
+            email,
+            password: hashedPassword,
+            fullName: name || 'Google User',
+            avatarUrl: picture || null,
+            role: Role.CLIENT,
+          },
+        });
+      } else {
+        // If avatarUrl was empty, update it
+        if (!user.avatarUrl && picture) {
+          user = await this.prisma.user.update({
+            where: { id: user.id },
+            data: { avatarUrl: picture },
+          });
+        }
+      }
+
+      // Mark user online
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { isOnline: true },
+      });
+
+      return this.generateTokens(user.id, user.email, user.role);
+    } catch (error: any) {
+      throw new UnauthorizedException('Xác thực Google thất bại: ' + error.message);
+    }
   }
 }
