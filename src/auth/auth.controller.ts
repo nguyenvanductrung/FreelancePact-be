@@ -17,6 +17,7 @@ import {
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { GoogleLoginDto } from './dto/google-login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { AuthTokensDto, AuthUserDto } from './dto/auth-response.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -55,6 +56,17 @@ export class AuthController {
   async login(@Body() dto: LoginDto): Promise<AuthTokensDto> {
     // ResponseTransformInterceptor wraps this as { data: { accessToken, refreshToken }, message: "OK" }
     return this.authService.login(dto);
+  }
+
+  // ─── POST /auth/google ────────────────────────────────────────────────────
+
+  @Post('google')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Đăng nhập bằng Google' })
+  @ApiResponse({ status: 200, description: 'Đăng nhập thành công', type: AuthTokensDto })
+  @ApiResponse({ status: 401, description: 'Xác thực Google thất bại' })
+  async googleLogin(@Body() dto: GoogleLoginDto): Promise<AuthTokensDto> {
+    return this.authService.loginWithGoogle(dto.accessToken);
   }
 
   // ─── GET /auth/me ─────────────────────────────────────────────────────────
