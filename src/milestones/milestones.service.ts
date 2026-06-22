@@ -5,7 +5,10 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { RejectMilestoneDto, SubmitMilestoneDto } from './dto/milestone-action.dto';
+import {
+  RejectMilestoneDto,
+  SubmitMilestoneDto,
+} from './dto/milestone-action.dto';
 import { MessageType, MilestoneStatus, NotificationType } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 
@@ -19,11 +22,7 @@ export class MilestonesService {
   /**
    * Freelancer submits a milestone for review.
    */
-  async submit(
-    milestoneId: string,
-    userId: string,
-    dto: SubmitMilestoneDto,
-  ) {
+  async submit(milestoneId: string, userId: string, dto: SubmitMilestoneDto) {
     const milestone = await this.prisma.milestone.findUnique({
       where: { id: milestoneId },
       include: { contract: true },
@@ -32,14 +31,18 @@ export class MilestonesService {
     if (!milestone) throw new NotFoundException('Milestone không tồn tại');
 
     if (milestone.contract.freelancerId !== userId) {
-      throw new ForbiddenException('Chỉ Freelancer mới có quyền submit milestone');
+      throw new ForbiddenException(
+        'Chỉ Freelancer mới có quyền submit milestone',
+      );
     }
 
     if (
       milestone.status !== MilestoneStatus.ACTIVE &&
       milestone.status !== MilestoneStatus.REVISION_REQUESTED
     ) {
-      throw new BadRequestException('Trạng thái milestone không hợp lệ để submit');
+      throw new BadRequestException(
+        'Trạng thái milestone không hợp lệ để submit',
+      );
     }
 
     // Update milestone
@@ -73,11 +76,7 @@ export class MilestonesService {
   /**
    * Client rejects a submitted milestone, requiring revisions.
    */
-  async reject(
-    milestoneId: string,
-    userId: string,
-    dto: RejectMilestoneDto,
-  ) {
+  async reject(milestoneId: string, userId: string, dto: RejectMilestoneDto) {
     const milestone = await this.prisma.milestone.findUnique({
       where: { id: milestoneId },
       include: { contract: true },
@@ -160,7 +159,7 @@ export class MilestonesService {
         submissionNote: ms.submissionNote,
         rejectionNote: ms.rejectionNote,
         submittedAt: ms.submittedAt,
-        files: ms.files.map(f => f.url),
+        files: ms.files.map((f) => f.url),
       })),
     };
   }

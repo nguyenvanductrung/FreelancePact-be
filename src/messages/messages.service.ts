@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SendMessageDto } from './dto/send-message.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
@@ -14,7 +18,11 @@ export class MessagesService {
   /**
    * Retrieves messages for a contract with pagination
    */
-  async getMessages(contractId: string, userId: string, pagination: PaginationDto) {
+  async getMessages(
+    contractId: string,
+    userId: string,
+    pagination: PaginationDto,
+  ) {
     // 1. Verify access
     const contract = await this.prisma.contract.findUnique({
       where: { id: contractId },
@@ -22,7 +30,9 @@ export class MessagesService {
 
     if (!contract) throw new NotFoundException('Hợp đồng không tồn tại');
     if (contract.freelancerId !== userId && contract.clientId !== userId) {
-      throw new ForbiddenException('Bạn không có quyền xem tin nhắn hợp đồng này');
+      throw new ForbiddenException(
+        'Bạn không có quyền xem tin nhắn hợp đồng này',
+      );
     }
 
     // 2. Fetch paginated messages
@@ -44,12 +54,15 @@ export class MessagesService {
       ...msg,
       type: msg.type.toLowerCase(),
       // Format file object as FE expects if it's a file
-      file: msg.type === 'FILE' && msg.fileUrl ? {
-        name: msg.fileName,
-        sizeBytes: msg.fileSizeBytes,
-        url: msg.fileUrl,
-        milestoneNote: msg.milestoneNote,
-      } : null,
+      file:
+        msg.type === 'FILE' && msg.fileUrl
+          ? {
+              name: msg.fileName,
+              sizeBytes: msg.fileSizeBytes,
+              url: msg.fileUrl,
+              milestoneNote: msg.milestoneNote,
+            }
+          : null,
     }));
 
     return {
@@ -70,7 +83,9 @@ export class MessagesService {
 
     if (!contract) throw new NotFoundException('Hợp đồng không tồn tại');
     if (contract.freelancerId !== userId && contract.clientId !== userId) {
-      throw new ForbiddenException('Bạn không có quyền gửi tin nhắn hợp đồng này');
+      throw new ForbiddenException(
+        'Bạn không có quyền gửi tin nhắn hợp đồng này',
+      );
     }
 
     const sender = await this.prisma.user.findUniqueOrThrow({
@@ -97,12 +112,15 @@ export class MessagesService {
     return {
       ...message,
       type: message.type.toLowerCase(),
-      file: message.type === 'FILE' && message.fileUrl ? {
-        name: message.fileName,
-        sizeBytes: message.fileSizeBytes,
-        url: message.fileUrl,
-        milestoneNote: message.milestoneNote,
-      } : null,
+      file:
+        message.type === 'FILE' && message.fileUrl
+          ? {
+              name: message.fileName,
+              sizeBytes: message.fileSizeBytes,
+              url: message.fileUrl,
+              milestoneNote: message.milestoneNote,
+            }
+          : null,
     };
   }
 }

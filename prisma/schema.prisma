@@ -53,6 +53,18 @@ enum PaymentStatus {
   FAILED
 }
 
+enum JobStatus {
+  OPEN
+  DRAFT
+  CLOSED
+}
+
+enum ApplicationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 model User {
@@ -76,14 +88,16 @@ model User {
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
 
-  badges          Badge[]
-  portfolioItems  PortfolioItem[]
-  experience      Experience[]
-  clientContracts    Contract[]     @relation("ClientContracts")
-  freelancerContracts Contract[]    @relation("FreelancerContracts")
-  sentMessages    Message[]
-  refreshTokens   RefreshToken[]
-  notifications   Notification[]
+  badges               Badge[]
+  portfolioItems       PortfolioItem[]
+  experience           Experience[]
+  clientContracts      Contract[]      @relation("ClientContracts")
+  freelancerContracts  Contract[]      @relation("FreelancerContracts")
+  sentMessages         Message[]
+  refreshTokens        RefreshToken[]
+  notifications        Notification[]
+  jobs                 Job[]           @relation("ClientJobs")
+  applications         Application[]   @relation("FreelancerApplications")
 }
 
 model Contract {
@@ -101,11 +115,13 @@ model Contract {
   specialTerms    String?
   freelancerId    String
   clientId        String
+  jobId           String?        @unique // Nguồn gốc từ Job (nullable: Contract có thể tạo trực tiếp)
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
   freelancer User      @relation("FreelancerContracts", fields: [freelancerId], references: [id])
   client     User      @relation("ClientContracts", fields: [clientId], references: [id])
+  job        Job?      @relation("JobContract", fields: [jobId], references: [id])
   milestones Milestone[]
   messages   Message[]
   payments   Payment[]
@@ -208,6 +224,40 @@ model Experience {
   userId      String
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Job {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  budget      Float                       // Ngân sách dự kiến (ADA) — Float hỗ trợ thập phân
+  duration    String?                     // VD: "1 tháng", "3 tháng"
+  deadline    DateTime?                   // Hạn chót nộp Application (tuỳ chọn)
+  skills      String[]                    // Kỹ năng yêu cầu
+  status      JobStatus @default(OPEN)
+  clientId    String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  client       User          @relation("ClientJobs", fields: [clientId], references: [id])
+  applications Application[]
+  contract     Contract?     @relation("JobContract") // 1 Job → tối đa 1 Contract
+}
+
+model Application {
+  id             String            @id @default(cuid())
+  jobId          String
+  freelancerId   String
+  coverLetter    String?           // Thư giới thiệu
+  proposedBudget Float?            // Đề xuất ngân sách (ADA)
+  status         ApplicationStatus @default(PENDING)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  job        Job  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  freelancer User @relation("FreelancerApplications", fields: [freelancerId], references: [id])
+
+  @@unique([jobId, freelancerId]) // Mỗi Freelancer chỉ apply 1 lần cho mỗi Job
 }
 
 enum NotificationType {

@@ -64,7 +64,10 @@ export class AuthService {
   /** Sign a long-lived refresh token (7d by default) and persist to DB */
   private async signRefreshToken(userId: string): Promise<string> {
     const expiresIn = this.config.get<string>('JWT_REFRESH_EXPIRES_IN', '7d');
-    const token = this.jwt.sign({ sub: userId }, { expiresIn: expiresIn as any });
+    const token = this.jwt.sign(
+      { sub: userId },
+      { expiresIn: expiresIn as any },
+    );
 
     // Compute expiry date from string (e.g. "7d")
     const days = parseInt(expiresIn.replace('d', ''), 10) || 7;
@@ -202,13 +205,19 @@ export class AuthService {
     });
 
     if (!stored || stored.expiresAt < new Date()) {
-      throw new UnauthorizedException('Refresh token không hợp lệ hoặc đã hết hạn');
+      throw new UnauthorizedException(
+        'Refresh token không hợp lệ hoặc đã hết hạn',
+      );
     }
 
     // Delete old token (rotation — one-time use)
     await this.prisma.refreshToken.delete({ where: { id: stored.id } });
 
-    return this.generateTokens(stored.user.id, stored.user.email, stored.user.role);
+    return this.generateTokens(
+      stored.user.id,
+      stored.user.email,
+      stored.user.role,
+    );
   }
 
   // ─── Logout ────────────────────────────────────────────────────────────────
@@ -234,9 +243,12 @@ export class AuthService {
    */
   async loginWithGoogle(accessToken: string): Promise<AuthTokensDto> {
     try {
-      const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      const response = await fetch(
+        'https://www.googleapis.com/oauth2/v3/userinfo',
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        },
+      );
       if (!response.ok) {
         throw new UnauthorizedException('Token Google không hợp lệ');
       }
@@ -244,7 +256,9 @@ export class AuthService {
 
       const { email, name, picture } = payload;
       if (!email) {
-        throw new UnauthorizedException('Token Google không chứa thông tin email');
+        throw new UnauthorizedException(
+          'Token Google không chứa thông tin email',
+        );
       }
 
       let user = await this.prisma.user.findUnique({
@@ -253,7 +267,9 @@ export class AuthService {
 
       if (!user) {
         // Create new user with random password
-        const randomPassword = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        const randomPassword =
+          Math.random().toString(36).substring(2, 15) +
+          Math.random().toString(36).substring(2, 15);
         const hashedPassword = await bcrypt.hash(randomPassword, 12);
 
         user = await this.prisma.user.create({
@@ -283,7 +299,9 @@ export class AuthService {
 
       return this.generateTokens(user.id, user.email, user.role);
     } catch (error: any) {
-      throw new UnauthorizedException('Xác thực Google thất bại: ' + error.message);
+      throw new UnauthorizedException(
+        'Xác thực Google thất bại: ' + error.message,
+      );
     }
   }
 }

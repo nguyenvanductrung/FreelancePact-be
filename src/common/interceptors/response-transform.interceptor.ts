@@ -22,9 +22,10 @@ interface PaginatedPayload<T> {
  *  Paginated list →  { data: T[], total, page, pageSize }  (passed through as-is)
  */
 @Injectable()
-export class ResponseTransformInterceptor<T>
-  implements NestInterceptor<T, unknown>
-{
+export class ResponseTransformInterceptor<T> implements NestInterceptor<
+  T,
+  unknown
+> {
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     return next.handle().pipe(
       map((value: unknown) => {
