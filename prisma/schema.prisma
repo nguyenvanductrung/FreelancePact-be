@@ -268,6 +268,8 @@ enum NotificationType {
   DISPUTE_OPENED
   PAYMENT_RELEASED
   NFT_MINTED
+  NEW_APPLICATION // Freelancer vừa nộp đơn ứng tuyển vào Job của Client
+  FREELANCER_SELECTED // Client đã chọn Freelancer và tạo Hợp đồng nháp
 }
 
 model Notification {

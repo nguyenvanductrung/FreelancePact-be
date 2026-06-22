@@ -8,17 +8,23 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateJobDto } from './dto/create-job.dto';
 import { CreateApplicationDto } from './dto/create-application.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   JobStatus,
   ApplicationStatus,
   ContractStatus,
   PaymentTerm,
   Prisma,
+  NotificationType,
+  MessageType,
 } from '@prisma/client';
 
 @Injectable()
 export class JobsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationsService: NotificationsService,
+  ) {}
 
   async createJob(clientId: string, dto: CreateJobDto) {
     return this.prisma.job.create({
@@ -130,7 +136,7 @@ export class JobsService {
       throw new ConflictException('Bạn đã ứng tuyển vào công việc này rồi');
     }
 
-    return this.prisma.application.create({
+    const application = await this.prisma.application.create({
       data: {
         jobId,
         freelancerId,
@@ -138,6 +144,29 @@ export class JobsService {
         proposedBudget: dto.proposedBudget,
       },
     });
+
+    const freelancer = await this.prisma.user.findUnique({
+      where: { id: freelancerId },
+      select: { id: true, fullName: true, avatarUrl: true, skills: true },
+    });
+
+    if (freelancer) {
+      await this.notificationsService.create(
+        job.clientId,
+        NotificationType.NEW_APPLICATION,
+        'Có ứng viên mới!',
+        `${freelancer.fullName} vừa nộp đơn ứng tuyển vào dự án "${job.title}".`,
+        {
+          jobId: job.id,
+          applicationId: application.id,
+          freelancerId: freelancer.id,
+          freelancerAvatar: freelancer.avatarUrl,
+          skills: freelancer.skills,
+        },
+      );
+    }
+
+    return application;
   }
 
   async getApplications(clientId: string, jobId: string) {
@@ -204,7 +233,7 @@ export class JobsService {
       });
 
       // 4. Tạo Contract mới ở trạng thái DRAFT
-      return tx.contract.create({
+      const newContract = await tx.contract.create({
         data: {
           title: job.title,
           description: job.description,
@@ -217,7 +246,41 @@ export class JobsService {
           paymentTerm: PaymentTerm.ESCROW_MILESTONE,
         },
       });
+
+      // 5. Tạo System Message để khởi tạo Room Chat
+      await tx.message.create({
+        data: {
+          contractId: newContract.id,
+          senderId: clientId, // Associate with client or system
+          senderName: 'Hệ thống',
+          type: MessageType.SYSTEM,
+          text: 'Hợp đồng nháp đã được tạo. Hãy bắt đầu thảo luận các điều khoản!',
+        },
+      });
+
+      return newContract;
     });
+
+    // 6. Gửi thông báo cho Freelancer
+    const client = await this.prisma.user.findUnique({
+      where: { id: clientId },
+      select: { fullName: true, avatarUrl: true },
+    });
+
+    if (client) {
+      await this.notificationsService.create(
+        application.freelancerId,
+        NotificationType.FREELANCER_SELECTED,
+        'Bạn đã được chọn!',
+        `Client ${client.fullName} đã chọn bạn cho dự án "${job.title}". Hợp đồng nháp đã được tạo.`,
+        {
+          jobId: job.id,
+          contractId: contract.id,
+          clientId: clientId,
+          clientAvatar: client.avatarUrl,
+        },
+      );
+    }
 
     return { contractId: contract.id };
   }

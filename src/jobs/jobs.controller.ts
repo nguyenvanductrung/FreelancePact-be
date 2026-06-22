@@ -7,6 +7,7 @@ import {
   UseGuards,
   Request,
   Query,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -81,6 +82,9 @@ export class JobsController {
     @Param('id') id: string,
     @Body() dto: CreateApplicationDto,
   ) {
+    if (req.user.role !== 'FREELANCER') {
+      throw new ForbiddenException('Chỉ Freelancer mới có thể ứng tuyển');
+    }
     return this.jobsService.applyToJob(req.user.userId, id, dto);
   }
 
@@ -101,6 +105,9 @@ export class JobsController {
     @Param('jobId') jobId: string,
     @Param('applicationId') applicationId: string,
   ) {
+    if (req.user.role !== 'CLIENT') {
+      throw new ForbiddenException('Chỉ Client mới có thể chọn Freelancer');
+    }
     return this.jobsService.selectFreelancer(
       req.user.userId,
       jobId,
