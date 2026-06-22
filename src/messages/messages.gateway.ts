@@ -18,7 +18,9 @@ import { Message } from '@prisma/client';
     credentials: true,
   },
 })
-export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class MessagesGateway
+  implements OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server: Server;
 
@@ -62,7 +64,7 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     // FE expected type: "text" | "file" | "system"
     const feMessageShape = {
       ...message,
-      type: message.type.toLowerCase(), 
+      type: message.type.toLowerCase(),
     };
     this.server.to(room).emit('newMessage', feMessageShape);
   }

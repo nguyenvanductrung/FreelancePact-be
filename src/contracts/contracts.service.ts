@@ -10,14 +10,22 @@ export class ContractsService {
   /** Map FE payment term format to Prisma Enum */
   private mapPaymentTerm(term: FePaymentTerm): PaymentTerm {
     switch (term) {
-      case FePaymentTerm.ESCROW_MILESTONE: return PaymentTerm.ESCROW_MILESTONE;
-      case FePaymentTerm.ESCROW_FULL: return PaymentTerm.ESCROW_FULL;
-      case FePaymentTerm.NET_15: return PaymentTerm.NET_15;
-      case FePaymentTerm.NET_30: return PaymentTerm.NET_30;
+      case FePaymentTerm.ESCROW_MILESTONE:
+        return PaymentTerm.ESCROW_MILESTONE;
+      case FePaymentTerm.ESCROW_FULL:
+        return PaymentTerm.ESCROW_FULL;
+      case FePaymentTerm.NET_15:
+        return PaymentTerm.NET_15;
+      case FePaymentTerm.NET_30:
+        return PaymentTerm.NET_30;
     }
   }
 
-  async createContract(userId: string, userRole: string, dto: CreateContractDto) {
+  async createContract(
+    userId: string,
+    userRole: string,
+    dto: CreateContractDto,
+  ) {
     if (!dto.milestones || dto.milestones.length === 0) {
       throw new BadRequestException('Hợp đồng phải có ít nhất 1 milestone');
     }
@@ -26,16 +34,20 @@ export class ContractsService {
     const totalValue = dto.milestones.reduce((sum, ms) => sum + ms.budget, 0);
 
     // 2. Resolve freelancerId and clientId
-    // Since FE currently only sends `partnerName` instead of `partnerId`, 
+    // Since FE currently only sends `partnerName` instead of `partnerId`,
     // we find a mock partner in the DB to satisfy Prisma Foreign Key constraints.
     let freelancerId = userId;
     let clientId = userId;
 
     if (userRole === 'freelancer') {
-      const mockClient = await this.prisma.user.findFirst({ where: { role: Role.CLIENT } });
+      const mockClient = await this.prisma.user.findFirst({
+        where: { role: Role.CLIENT },
+      });
       clientId = mockClient ? mockClient.id : userId; // fallback to self if no client exists
     } else {
-      const mockFreelancer = await this.prisma.user.findFirst({ where: { role: Role.FREELANCER } });
+      const mockFreelancer = await this.prisma.user.findFirst({
+        where: { role: Role.FREELANCER },
+      });
       freelancerId = mockFreelancer ? mockFreelancer.id : userId;
     }
 
@@ -82,7 +94,7 @@ export class ContractsService {
       clientId: contract.clientId,
       createdAt: contract.createdAt,
       updatedAt: contract.updatedAt,
-      milestones: contract.milestones.map(ms => ({
+      milestones: contract.milestones.map((ms) => ({
         id: ms.id,
         name: ms.name,
         budget: ms.budget,

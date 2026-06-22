@@ -37,7 +37,11 @@ export class AuthController {
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Đăng ký tài khoản mới (freelancer hoặc client)' })
-  @ApiResponse({ status: 201, description: 'Đăng ký thành công', type: AuthTokensDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Đăng ký thành công',
+    type: AuthTokensDto,
+  })
   @ApiResponse({ status: 409, description: 'Email đã được sử dụng' })
   @ApiResponse({ status: 400, description: 'Validation failed' })
   async register(@Body() dto: RegisterDto) {
@@ -51,7 +55,11 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Đăng nhập — trả về accessToken + refreshToken' })
-  @ApiResponse({ status: 200, description: 'Đăng nhập thành công', type: AuthTokensDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Đăng nhập thành công',
+    type: AuthTokensDto,
+  })
   @ApiResponse({ status: 401, description: 'Sai email hoặc mật khẩu' })
   async login(@Body() dto: LoginDto): Promise<AuthTokensDto> {
     // ResponseTransformInterceptor wraps this as { data: { accessToken, refreshToken }, message: "OK" }
@@ -63,7 +71,11 @@ export class AuthController {
   @Post('google')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Đăng nhập bằng Google' })
-  @ApiResponse({ status: 200, description: 'Đăng nhập thành công', type: AuthTokensDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Đăng nhập thành công',
+    type: AuthTokensDto,
+  })
   @ApiResponse({ status: 401, description: 'Xác thực Google thất bại' })
   async googleLogin(@Body() dto: GoogleLoginDto): Promise<AuthTokensDto> {
     return this.authService.loginWithGoogle(dto.accessToken);
@@ -87,7 +99,10 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Làm mới access token bằng refresh token' })
   @ApiResponse({ status: 200, description: 'Token mới', type: AuthTokensDto })
-  @ApiResponse({ status: 401, description: 'Refresh token không hợp lệ hoặc đã hết hạn' })
+  @ApiResponse({
+    status: 401,
+    description: 'Refresh token không hợp lệ hoặc đã hết hạn',
+  })
   async refresh(@Body() dto: RefreshTokenDto): Promise<AuthTokensDto> {
     return this.authService.refresh(dto.refreshToken);
   }

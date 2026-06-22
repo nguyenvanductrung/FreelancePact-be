@@ -58,7 +58,9 @@ async function bootstrap() {
   // ── Listen ─────────────────────────────────────────────────────────────────
   const port = process.env.PORT ?? 3001;
   await app.listen(port);
-  console.log(`🚀 FreelancePact API running at http://localhost:${port}/api/v1`);
+  console.log(
+    `🚀 FreelancePact API running at http://localhost:${port}/api/v1`,
+  );
   console.log(`📚 Swagger docs at http://localhost:${port}/api/docs`);
 }
 

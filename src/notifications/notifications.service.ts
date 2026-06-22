@@ -21,10 +21,7 @@ export class NotificationsService {
     const [data, total, unreadCount] = await Promise.all([
       this.prisma.notification.findMany({
         where: { userId },
-        orderBy: [
-          { isRead: 'asc' },
-          { createdAt: 'desc' },
-        ],
+        orderBy: [{ isRead: 'asc' }, { createdAt: 'desc' }],
         skip,
         take: pageSize,
       }),

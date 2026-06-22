@@ -8,7 +8,12 @@ import {
   Request,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { MessagesService } from './messages.service';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -29,7 +34,11 @@ export class MessagesController {
     @Query() pagination: PaginationDto,
     @Request() req: any,
   ) {
-    return this.messagesService.getMessages(contractId, req.user.userId, pagination);
+    return this.messagesService.getMessages(
+      contractId,
+      req.user.userId,
+      pagination,
+    );
   }
 
   @Post()

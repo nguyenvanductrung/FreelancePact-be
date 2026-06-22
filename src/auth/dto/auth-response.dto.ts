@@ -17,7 +17,10 @@ export class AuthUserDto {
   @ApiProperty({ example: 'Nguyen Van A' })
   fullName: string;
 
-  @ApiProperty({ example: 'https://cdn.example.com/avatar.png', nullable: true })
+  @ApiProperty({
+    example: 'https://cdn.example.com/avatar.png',
+    nullable: true,
+  })
   avatarUrl: string | null;
 
   /** lowercase as FE expects */
