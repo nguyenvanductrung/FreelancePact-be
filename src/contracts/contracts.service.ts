@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateContractDto, FePaymentTerm } from './dto/create-contract.dto';
+import { SelectFreelancerDto } from './dto/select-freelancer.dto';
 import { PaymentTerm, Role } from '@prisma/client';
 
 @Injectable()
@@ -102,6 +103,53 @@ export class ContractsService {
         status: ms.status.toLowerCase(),
         progressPercent: ms.progressPercent,
       })),
+    };
+  }
+
+  async selectFreelancerAndCreateDraftContract(clientId: string, dto: SelectFreelancerDto) {
+    const { jobId, freelancerId } = dto;
+    
+    // Validate Job
+    const job = await this.prisma.job.findUnique({ where: { id: jobId } });
+    if (!job) {
+      throw new BadRequestException('Job không tồn tại');
+    }
+    if (job.clientId !== clientId) {
+      throw new BadRequestException('Bạn không có quyền sở hữu Job này');
+    }
+
+    // Validate Freelancer
+    const freelancer = await this.prisma.user.findUnique({ where: { id: freelancerId } });
+    if (!freelancer) {
+      throw new BadRequestException('Freelancer không tồn tại');
+    }
+
+    // Use transaction
+    const result = await this.prisma.$transaction(async (prisma) => {
+      await prisma.job.update({
+        where: { id: jobId },
+        data: { status: 'DRAFT' },
+      });
+
+      const contract = await prisma.contract.create({
+        data: {
+          title: `Hợp đồng cho: ${job.title}`,
+          partnerName: freelancer.fullName,
+          status: 'DRAFT',
+          totalValue: job.budget,
+          clientId,
+          freelancerId,
+          jobId,
+          paymentTerm: 'ESCROW_MILESTONE',
+        },
+      });
+
+      return contract;
+    });
+
+    return {
+      message: 'Tạo hợp đồng nháp thành công. Client có thể tiến hành tạo giao dịch Smart Contract (CBOR hex) để ký duyệt.',
+      contractId: result.id,
     };
   }
 }

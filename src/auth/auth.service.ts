@@ -136,8 +136,8 @@ export class AuthService {
       },
     });
 
-    const tokens = await this.generateTokens(user.id, user.email, user.role);
-    return { tokens, user: this.toAuthUser(user) };
+    const tokens = await this.generateTokens(user.id, user.email, user.role as Role);
+    return { tokens, user: this.toAuthUser({ ...user, role: user.role as Role }) };
   }
 
   // ─── Login ─────────────────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ export class AuthService {
       data: { isOnline: true },
     });
 
-    return this.generateTokens(user.id, user.email, user.role);
+    return this.generateTokens(user.id, user.email, user.role as Role);
   }
 
   // ─── Me ────────────────────────────────────────────────────────────────────
@@ -189,7 +189,7 @@ export class AuthService {
         isKycVerified: true,
       },
     });
-    return this.toAuthUser(user);
+    return this.toAuthUser({ ...user, role: user.role as Role });
   }
 
   // ─── Refresh ───────────────────────────────────────────────────────────────
@@ -216,7 +216,7 @@ export class AuthService {
     return this.generateTokens(
       stored.user.id,
       stored.user.email,
-      stored.user.role,
+      stored.user.role as Role,
     );
   }
 
@@ -297,7 +297,7 @@ export class AuthService {
         data: { isOnline: true },
       });
 
-      return this.generateTokens(user.id, user.email, user.role);
+      return this.generateTokens(user.id, user.email, user.role as Role);
     } catch (error: any) {
       throw new UnauthorizedException(
         'Xác thực Google thất bại: ' + error.message,

@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Post, Request, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -8,6 +8,7 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ContractsService } from './contracts.service';
 import { CreateContractDto } from './dto/create-contract.dto';
+import { SelectFreelancerDto } from './dto/select-freelancer.dto';
 
 @ApiTags('Contracts')
 @Controller('contracts')
@@ -29,5 +30,16 @@ export class ContractsController {
       req.user.role,
       dto,
     );
+  }
+
+  @Post('select-freelancer')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Chọn Freelancer cho Job và Khởi tạo Hợp đồng Nháp (Cardano)' })
+  @ApiResponse({ status: 200, description: 'Tạo thành công hợp đồng nháp' })
+  async selectFreelancer(
+    @Request() req: any,
+    @Body() dto: SelectFreelancerDto,
+  ) {
+    return this.contractsService.selectFreelancerAndCreateDraftContract(req.user.userId, dto);
   }
 }
