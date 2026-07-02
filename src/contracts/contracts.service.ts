@@ -152,4 +152,75 @@ export class ContractsService {
       contractId: result.id,
     };
   }
+
+  async findAll(userId: string, page: number = 1, pageSize: number = 10) {
+    const skip = (page - 1) * pageSize;
+    const [total, contracts] = await this.prisma.$transaction([
+      this.prisma.contract.count({
+        where: { OR: [{ freelancerId: userId }, { clientId: userId }] },
+      }),
+      this.prisma.contract.findMany({
+        where: { OR: [{ freelancerId: userId }, { clientId: userId }] },
+        skip,
+        take: pageSize,
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const data = contracts.map((c) => ({
+      id: c.id,
+      title: c.title,
+      partnerName: c.partnerName,
+      status: c.status.toLowerCase(),
+      totalValue: Number(c.totalValue),
+      startDate: c.startDate,
+      endDate: c.endDate,
+      progressPercent: c.progressPercent,
+    }));
+
+    return {
+      data,
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  async findOne(userId: string, id: string) {
+    const contract = await this.prisma.contract.findUnique({
+      where: { id },
+      include: { milestones: true },
+    });
+
+    if (!contract || (contract.freelancerId !== userId && contract.clientId !== userId)) {
+      throw new BadRequestException('Hợp đồng không tồn tại hoặc bạn không có quyền truy cập');
+    }
+
+    return {
+      id: contract.id,
+      title: contract.title,
+      partnerName: contract.partnerName,
+      status: contract.status.toLowerCase(),
+      totalValue: Number(contract.totalValue),
+      escrowedAmount: Number(contract.escrowedAmount),
+      startDate: contract.startDate,
+      endDate: contract.endDate,
+      progressPercent: contract.progressPercent,
+      description: contract.description,
+      paymentTerm: contract.paymentTerm,
+      specialTerms: contract.specialTerms,
+      freelancerId: contract.freelancerId,
+      clientId: contract.clientId,
+      createdAt: contract.createdAt,
+      updatedAt: contract.updatedAt,
+      milestones: contract.milestones.map((ms) => ({
+        id: ms.id,
+        name: ms.name,
+        budget: ms.budget,
+        deadline: ms.deadline,
+        status: ms.status.toLowerCase(),
+        progressPercent: ms.progressPercent,
+      })),
+    };
+  }
 }

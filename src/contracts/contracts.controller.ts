@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Request, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query, Request, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -41,5 +41,26 @@ export class ContractsController {
     @Body() dto: SelectFreelancerDto,
   ) {
     return this.contractsService.selectFreelancerAndCreateDraftContract(req.user.userId, dto);
+  }
+
+  @Get()
+  @ApiOperation({ summary: 'Lấy danh sách hợp đồng của user hiện tại' })
+  @ApiResponse({ status: 200, description: 'Danh sách hợp đồng phân trang' })
+  async getContracts(
+    @Request() req: any,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    const pageNumber = page ? parseInt(page, 10) : 1;
+    const size = pageSize ? parseInt(pageSize, 10) : 10;
+    return this.contractsService.findAll(req.user.userId, pageNumber, size);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Lấy chi tiết một hợp đồng' })
+  @ApiResponse({ status: 200, description: 'Chi tiết hợp đồng' })
+  async getContract(@Request() req: any, @Param('id') id: string) {
+    const data = await this.contractsService.findOne(req.user.userId, id);
+    return { data };
   }
 }
