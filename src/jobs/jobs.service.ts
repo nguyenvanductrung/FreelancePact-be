@@ -34,7 +34,7 @@ export class JobsService {
         budget: dto.budget,
         duration: dto.duration,
         deadline: dto.deadline ? new Date(dto.deadline) : null,
-        skills: dto.skills,
+        skills: Array.isArray(dto.skills) ? JSON.stringify(dto.skills) : (dto.skills ?? '[]'),
         clientId,
       },
     });
@@ -46,18 +46,19 @@ export class JobsService {
     budgetMin?: number;
     budgetMax?: number;
   }) {
-    const whereClause: Prisma.JobWhereInput = { status: JobStatus.OPEN };
+    const whereClause: Prisma.JobWhereInput = { status: 'OPEN' };
 
     if (filters.search) {
       whereClause.OR = [
-        { title: { contains: filters.search, mode: 'insensitive' } },
-        { description: { contains: filters.search, mode: 'insensitive' } },
+        { title: { contains: filters.search } },
+        { description: { contains: filters.search } },
       ];
     }
 
+    // SQLite: skills stored as JSON string, filter in memory
+    let skillsFilter: string[] | undefined;
     if (filters.skills) {
-      const skillsArray = filters.skills.split(',').map((s) => s.trim());
-      whereClause.skills = { hasSome: skillsArray };
+      skillsFilter = filters.skills.split(',').map((s) => s.trim());
     }
 
     if (filters.budgetMin !== undefined || filters.budgetMax !== undefined) {
@@ -72,18 +73,25 @@ export class JobsService {
       where: whereClause,
       include: {
         client: { select: { id: true, fullName: true, avatarUrl: true } },
-        _count: { select: { applications: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
 
-    return jobs.map((job) => ({
+    let result = jobs.map((job) => ({
       ...job,
       clientName: job.client.fullName,
-      applicationCount: job._count.applications,
-      _count: undefined,
       client: undefined,
     }));
+
+    // Filter by skills in-memory (SQLite doesn't support array operators)
+    if (skillsFilter && skillsFilter.length > 0) {
+      result = result.filter((job) => {
+        const jobSkills: string[] = (() => { try { return JSON.parse(job.skills as string); } catch { return []; } })();
+        return skillsFilter!.some((s) => jobSkills.includes(s));
+      });
+    }
+
+    return result;
   }
 
   async getMyJobs(clientId: string) {
@@ -101,7 +109,6 @@ export class JobsService {
       where: { id: jobId },
       include: {
         client: { select: { id: true, fullName: true, avatarUrl: true } },
-        _count: { select: { applications: true } },
       },
     });
 
@@ -110,8 +117,6 @@ export class JobsService {
     return {
       ...job,
       clientName: job.client.fullName,
-      applicationCount: job._count.applications,
-      _count: undefined,
       client: undefined,
     };
   }
@@ -123,7 +128,7 @@ export class JobsService {
   ) {
     const job = await this.prisma.job.findUnique({ where: { id: jobId } });
     if (!job) throw new NotFoundException('Job không tồn tại');
-    if (job.status !== JobStatus.OPEN)
+    if (job.status !== 'OPEN')
       throw new BadRequestException('Job này không còn mở tuyển dụng');
 
     const existingApp = await this.prisma.application.findUnique({
@@ -203,7 +208,7 @@ export class JobsService {
     if (!job) throw new NotFoundException('Job không tồn tại');
     if (job.clientId !== clientId)
       throw new ForbiddenException('Bạn không phải người tạo Job này');
-    if (job.status !== JobStatus.OPEN)
+    if (job.status !== 'OPEN')
       throw new BadRequestException('Job này không còn mở tuyển dụng');
 
     const application = await this.prisma.application.findUnique({
@@ -223,13 +228,13 @@ export class JobsService {
       // 2. Accept Application được chọn
       await tx.application.update({
         where: { id: applicationId },
-        data: { status: ApplicationStatus.ACCEPTED },
+        data: { status: 'ACCEPTED' },
       });
 
       // 3. Reject tất cả Application còn lại
       await tx.application.updateMany({
         where: { jobId, id: { not: applicationId } },
-        data: { status: ApplicationStatus.REJECTED },
+        data: { status: 'REJECTED' },
       });
 
       // 4. Tạo Contract mới ở trạng thái DRAFT
@@ -240,10 +245,10 @@ export class JobsService {
           clientId: clientId,
           freelancerId: application.freelancerId,
           jobId: jobId,
-          partnerName: '', // Sẽ cập nhật sau
+          partnerName: '',
           totalValue: job.budget,
-          status: ContractStatus.DRAFT,
-          paymentTerm: PaymentTerm.ESCROW_MILESTONE,
+          status: 'DRAFT',
+          paymentTerm: 'ESCROW_MILESTONE',
         },
       });
 

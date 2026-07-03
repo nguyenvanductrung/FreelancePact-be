@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateContractDto, FePaymentTerm } from './dto/create-contract.dto';
+import { SelectFreelancerDto } from './dto/select-freelancer.dto';
 import { PaymentTerm, Role } from '@prisma/client';
 
 @Injectable()
@@ -89,6 +90,124 @@ export class ContractsService {
       progressPercent: contract.progressPercent,
       description: contract.description,
       paymentTerm: dto.paymentTerm, // Return original string enum
+      specialTerms: contract.specialTerms,
+      freelancerId: contract.freelancerId,
+      clientId: contract.clientId,
+      createdAt: contract.createdAt,
+      updatedAt: contract.updatedAt,
+      milestones: contract.milestones.map((ms) => ({
+        id: ms.id,
+        name: ms.name,
+        budget: ms.budget,
+        deadline: ms.deadline,
+        status: ms.status.toLowerCase(),
+        progressPercent: ms.progressPercent,
+      })),
+    };
+  }
+
+  async selectFreelancerAndCreateDraftContract(clientId: string, dto: SelectFreelancerDto) {
+    const { jobId, freelancerId } = dto;
+    
+    // Validate Job
+    const job = await this.prisma.job.findUnique({ where: { id: jobId } });
+    if (!job) {
+      throw new BadRequestException('Job không tồn tại');
+    }
+    if (job.clientId !== clientId) {
+      throw new BadRequestException('Bạn không có quyền sở hữu Job này');
+    }
+
+    // Validate Freelancer
+    const freelancer = await this.prisma.user.findUnique({ where: { id: freelancerId } });
+    if (!freelancer) {
+      throw new BadRequestException('Freelancer không tồn tại');
+    }
+
+    // Use transaction
+    const result = await this.prisma.$transaction(async (prisma) => {
+      await prisma.job.update({
+        where: { id: jobId },
+        data: { status: 'DRAFT' },
+      });
+
+      const contract = await prisma.contract.create({
+        data: {
+          title: `Hợp đồng cho: ${job.title}`,
+          partnerName: freelancer.fullName,
+          status: 'DRAFT',
+          totalValue: job.budget,
+          clientId,
+          freelancerId,
+          jobId,
+          paymentTerm: 'ESCROW_MILESTONE',
+        },
+      });
+
+      return contract;
+    });
+
+    return {
+      message: 'Tạo hợp đồng nháp thành công. Client có thể tiến hành tạo giao dịch Smart Contract (CBOR hex) để ký duyệt.',
+      contractId: result.id,
+    };
+  }
+
+  async findAll(userId: string, page: number = 1, pageSize: number = 10) {
+    const skip = (page - 1) * pageSize;
+    const [total, contracts] = await this.prisma.$transaction([
+      this.prisma.contract.count({
+        where: { OR: [{ freelancerId: userId }, { clientId: userId }] },
+      }),
+      this.prisma.contract.findMany({
+        where: { OR: [{ freelancerId: userId }, { clientId: userId }] },
+        skip,
+        take: pageSize,
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const data = contracts.map((c) => ({
+      id: c.id,
+      title: c.title,
+      partnerName: c.partnerName,
+      status: c.status.toLowerCase(),
+      totalValue: Number(c.totalValue),
+      startDate: c.startDate,
+      endDate: c.endDate,
+      progressPercent: c.progressPercent,
+    }));
+
+    return {
+      data,
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  async findOne(userId: string, id: string) {
+    const contract = await this.prisma.contract.findUnique({
+      where: { id },
+      include: { milestones: true },
+    });
+
+    if (!contract || (contract.freelancerId !== userId && contract.clientId !== userId)) {
+      throw new BadRequestException('Hợp đồng không tồn tại hoặc bạn không có quyền truy cập');
+    }
+
+    return {
+      id: contract.id,
+      title: contract.title,
+      partnerName: contract.partnerName,
+      status: contract.status.toLowerCase(),
+      totalValue: Number(contract.totalValue),
+      escrowedAmount: Number(contract.escrowedAmount),
+      startDate: contract.startDate,
+      endDate: contract.endDate,
+      progressPercent: contract.progressPercent,
+      description: contract.description,
+      paymentTerm: contract.paymentTerm,
       specialTerms: contract.specialTerms,
       freelancerId: contract.freelancerId,
       clientId: contract.clientId,

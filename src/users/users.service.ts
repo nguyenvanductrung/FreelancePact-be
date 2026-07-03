@@ -34,7 +34,13 @@ export class UsersService {
       bio: user.bio,
       hourlyRate: user.hourlyRate,
       availabilityHoursPerWeek: user.availabilityHoursPerWeek,
-      skills: user.skills,
+      skills: (() => {
+        try {
+          return JSON.parse(user.skills || '[]') as string[];
+        } catch {
+          return [];
+        }
+      })(),
       successRate: user.successRate,
       totalContracts: user.totalContracts,
       rating: user.rating,
@@ -73,9 +79,14 @@ export class UsersService {
     // Make sure user exists
     await this.getProfile(userId);
 
+    const data: any = { ...dto };
+    if (dto.skills) {
+      data.skills = JSON.stringify(dto.skills);
+    }
+
     await this.prisma.user.update({
       where: { id: userId },
-      data: dto,
+      data,
     });
 
     return this.getProfile(userId);
