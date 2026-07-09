@@ -43,10 +43,7 @@ export class MilestonesController {
 
   @Patch(':id/reject')
   @ApiOperation({ summary: 'Client từ chối sản phẩm, yêu cầu chỉnh sửa' })
-  @ApiResponse({
-    status: 200,
-    description: 'Trả về ContractDetail đã cập nhật',
-  })
+  @ApiResponse({ status: 200, description: 'Trả về ContractDetail đã cập nhật' })
   @ApiResponse({ status: 403, description: 'Không có quyền' })
   async reject(
     @Param('id') milestoneId: string,
@@ -54,5 +51,17 @@ export class MilestonesController {
     @Body() dto: RejectMilestoneDto,
   ) {
     return this.milestonesService.reject(milestoneId, req.user.userId, dto);
+  }
+
+  @Patch(':id/approve')
+  @ApiOperation({ summary: 'Client nghiệm thu và giải ngân ADA cho Milestone' })
+  @ApiResponse({ status: 200, description: 'Trả về ContractDetail đã cập nhật' })
+  @ApiResponse({ status: 403, description: 'Không có quyền' })
+  @ApiResponse({ status: 400, description: 'Milestone chưa ở trạng thái SUBMITTED' })
+  async approve(
+    @Param('id') milestoneId: string,
+    @Request() req: any,
+  ) {
+    return this.milestonesService.approve(milestoneId, req.user.userId);
   }
 }

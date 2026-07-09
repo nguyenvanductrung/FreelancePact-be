@@ -1,13 +1,30 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateContractDto, FePaymentTerm } from './dto/create-contract.dto';
-import { PaymentTerm, Role } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
+import {
+  ContractStatus,
+  MilestoneStatus,
+  MessageType,
+  NotificationType,
+  PaymentTerm,
+  Role,
+} from '@prisma/client';
 
 @Injectable()
 export class ContractsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
-  /** Map FE payment term format to Prisma Enum */
+  // ─── Helpers ────────────────────────────────────────────────────────────────
+
   private mapPaymentTerm(term: FePaymentTerm): PaymentTerm {
     switch (term) {
       case FePaymentTerm.ESCROW_MILESTONE:
@@ -21,62 +38,8 @@ export class ContractsService {
     }
   }
 
-  async createContract(
-    userId: string,
-    userRole: string,
-    dto: CreateContractDto,
-  ) {
-    if (!dto.milestones || dto.milestones.length === 0) {
-      throw new BadRequestException('Hợp đồng phải có ít nhất 1 milestone');
-    }
-
-    // 1. Calculate total value from milestones
-    const totalValue = dto.milestones.reduce((sum, ms) => sum + ms.budget, 0);
-
-    // 2. Resolve freelancerId and clientId
-    // Since FE currently only sends `partnerName` instead of `partnerId`,
-    // we find a mock partner in the DB to satisfy Prisma Foreign Key constraints.
-    let freelancerId = userId;
-    let clientId = userId;
-
-    if (userRole === 'freelancer') {
-      const mockClient = await this.prisma.user.findFirst({
-        where: { role: Role.CLIENT },
-      });
-      clientId = mockClient ? mockClient.id : userId; // fallback to self if no client exists
-    } else {
-      const mockFreelancer = await this.prisma.user.findFirst({
-        where: { role: Role.FREELANCER },
-      });
-      freelancerId = mockFreelancer ? mockFreelancer.id : userId;
-    }
-
-    // 3. Create Contract + Milestones in a transaction
-    const contract = await this.prisma.contract.create({
-      data: {
-        title: dto.title,
-        partnerName: dto.partnerName,
-        description: dto.description,
-        paymentTerm: this.mapPaymentTerm(dto.paymentTerm),
-        specialTerms: dto.specialTerms,
-        totalValue: totalValue,
-        freelancerId,
-        clientId,
-        // Inline milestone creation
-        milestones: {
-          create: dto.milestones.map((ms) => ({
-            name: ms.name,
-            budget: ms.budget,
-            deadline: ms.deadline,
-          })),
-        },
-      },
-      include: {
-        milestones: true,
-      },
-    });
-
-    // Match the exact FE Response Shape
+  /** Return ContractDetail shape matching FE types */
+  private formatContractDetail(contract: any) {
     return {
       id: contract.id,
       title: contract.title,
@@ -88,20 +51,180 @@ export class ContractsService {
       endDate: contract.endDate,
       progressPercent: contract.progressPercent,
       description: contract.description,
-      paymentTerm: dto.paymentTerm, // Return original string enum
+      paymentTerm: contract.paymentTerm,
       specialTerms: contract.specialTerms,
       freelancerId: contract.freelancerId,
       clientId: contract.clientId,
       createdAt: contract.createdAt,
       updatedAt: contract.updatedAt,
-      milestones: contract.milestones.map((ms) => ({
+      milestones: (contract.milestones ?? []).map((ms: any) => ({
         id: ms.id,
         name: ms.name,
-        budget: ms.budget,
+        budget: Number(ms.budget),
         deadline: ms.deadline,
         status: ms.status.toLowerCase(),
         progressPercent: ms.progressPercent,
+        submissionNote: ms.submissionNote,
+        rejectionNote: ms.rejectionNote,
+        submittedAt: ms.submittedAt,
+        completedAt: ms.completedAt,
+        files: (ms.files ?? []).map((f: any) => f.url),
       })),
     };
+  }
+
+  // ─── GET /contracts ──────────────────────────────────────────────────────────
+
+  async getMyContracts(userId: string) {
+    const contracts = await this.prisma.contract.findMany({
+      where: {
+        OR: [{ clientId: userId }, { freelancerId: userId }],
+      },
+      include: {
+        milestones: { include: { files: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return contracts.map((c) => this.formatContractDetail(c));
+  }
+
+  // ─── GET /contracts/:id ──────────────────────────────────────────────────────
+
+  async getContractById(userId: string, contractId: string) {
+    const contract = await this.prisma.contract.findUnique({
+      where: { id: contractId },
+      include: { milestones: { include: { files: true } } },
+    });
+
+    if (!contract) throw new NotFoundException('Hợp đồng không tồn tại');
+
+    // Only client or freelancer of this contract can view
+    if (contract.clientId !== userId && contract.freelancerId !== userId) {
+      throw new ForbiddenException('Bạn không có quyền xem hợp đồng này');
+    }
+
+    return this.formatContractDetail(contract);
+  }
+
+  // ─── POST /contracts ─────────────────────────────────────────────────────────
+
+  async createContract(userId: string, userRole: string, dto: CreateContractDto) {
+    if (!dto.milestones || dto.milestones.length === 0) {
+      throw new BadRequestException('Hợp đồng phải có ít nhất 1 milestone');
+    }
+
+    const totalValue = dto.milestones.reduce((sum, ms) => sum + ms.budget, 0);
+
+    let freelancerId = userId;
+    let clientId = userId;
+
+    if (userRole === 'freelancer') {
+      const mockClient = await this.prisma.user.findFirst({
+        where: { role: Role.CLIENT },
+      });
+      clientId = mockClient ? mockClient.id : userId;
+    } else {
+      const mockFreelancer = await this.prisma.user.findFirst({
+        where: { role: Role.FREELANCER },
+      });
+      freelancerId = mockFreelancer ? mockFreelancer.id : userId;
+    }
+
+    const contract = await this.prisma.contract.create({
+      data: {
+        title: dto.title,
+        partnerName: dto.partnerName,
+        description: dto.description,
+        paymentTerm: this.mapPaymentTerm(dto.paymentTerm),
+        specialTerms: dto.specialTerms,
+        totalValue: totalValue,
+        freelancerId,
+        clientId,
+        milestones: {
+          create: dto.milestones.map((ms) => ({
+            name: ms.name,
+            budget: ms.budget,
+            deadline: ms.deadline,
+          })),
+        },
+      },
+      include: { milestones: { include: { files: true } } },
+    });
+
+    return this.formatContractDetail(contract);
+  }
+
+  // ─── POST /contracts/:id/fund (Mock Deposit ADA) ─────────────────────────────
+
+  async fundContract(userId: string, contractId: string) {
+    const contract = await this.prisma.contract.findUnique({
+      where: { id: contractId },
+      include: { milestones: { orderBy: { createdAt: 'asc' } } },
+    });
+
+    if (!contract) throw new NotFoundException('Hợp đồng không tồn tại');
+    if (contract.clientId !== userId) {
+      throw new ForbiddenException('Chỉ Client mới có thể nạp tiền cho hợp đồng');
+    }
+    if (contract.status !== ContractStatus.DRAFT) {
+      throw new BadRequestException(
+        `Hợp đồng đang ở trạng thái ${contract.status}, không thể nạp tiền`,
+      );
+    }
+
+    const firstMilestone = contract.milestones[0];
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // 1. Activate contract + set escrowedAmount = totalValue
+      const updatedContract = await tx.contract.update({
+        where: { id: contractId },
+        data: {
+          status: ContractStatus.ACTIVE,
+          escrowedAmount: contract.totalValue,
+          startDate: new Date().toISOString().split('T')[0],
+        },
+        include: { milestones: { include: { files: true } } },
+      });
+
+      // 2. Activate the first milestone
+      if (firstMilestone) {
+        await tx.milestone.update({
+          where: { id: firstMilestone.id },
+          data: {
+            status: MilestoneStatus.ACTIVE,
+          },
+        });
+      }
+
+      // 3. System message: escrow funded
+      await tx.message.create({
+        data: {
+          contractId,
+          senderId: userId,
+          senderName: 'Hệ thống',
+          type: MessageType.SYSTEM,
+          text: `✅ Client đã nạp ${Number(contract.totalValue).toLocaleString()} ADA vào Escrow. Hợp đồng đã chính thức bắt đầu!`,
+        },
+      });
+
+      return updatedContract;
+    });
+
+    // 4. Notify Freelancer
+    await this.notificationsService.create(
+      contract.freelancerId,
+      NotificationType.CONTRACT_SIGNED,
+      'Hợp đồng đã bắt đầu!',
+      `Client đã nạp ADA vào Escrow. Milestone "${firstMilestone?.name ?? ''}" đã được kích hoạt. Hãy bắt đầu làm việc!`,
+      { contractId },
+    );
+
+    // Re-fetch with updated milestones for fresh data
+    const fresh = await this.prisma.contract.findUnique({
+      where: { id: contractId },
+      include: { milestones: { include: { files: true } } },
+    });
+
+    return this.formatContractDetail(fresh);
   }
 }

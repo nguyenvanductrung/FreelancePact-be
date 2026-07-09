@@ -9,7 +9,13 @@ import {
   RejectMilestoneDto,
   SubmitMilestoneDto,
 } from './dto/milestone-action.dto';
-import { MessageType, MilestoneStatus, NotificationType } from '@prisma/client';
+import {
+  ContractStatus,
+  MessageType,
+  MilestoneStatus,
+  NotificationType,
+  PaymentStatus,
+} from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
@@ -123,6 +129,141 @@ export class MilestonesService {
     );
 
     return this.getContractDetailShape(milestone.contractId);
+  }
+
+  /**
+   * Client approves a submitted milestone → triggers mock payment release.
+   */
+  async approve(milestoneId: string, userId: string) {
+    const milestone = await this.prisma.milestone.findUnique({
+      where: { id: milestoneId },
+      include: { contract: { include: { milestones: { orderBy: { createdAt: 'asc' } } } } },
+    });
+
+    if (!milestone) throw new NotFoundException('Milestone không tồn tại');
+
+    if (milestone.contract.clientId !== userId) {
+      throw new ForbiddenException('Chỉ Client mới có quyền approve milestone');
+    }
+
+    if (milestone.status !== MilestoneStatus.SUBMITTED) {
+      throw new BadRequestException(
+        'Milestone phải ở trạng thái SUBMITTED mới có thể approve',
+      );
+    }
+
+    const contract = milestone.contract;
+    const milestoneAmount = Number(milestone.budget);
+    const newEscrowedAmount = Math.max(
+      0,
+      Number(contract.escrowedAmount) - milestoneAmount,
+    );
+
+    // Find the next PENDING milestone
+    const nextMilestone = contract.milestones.find(
+      (m) => m.status === MilestoneStatus.PENDING,
+    );
+
+    // Check if all milestones will be COMPLETED after this approve
+    const otherMilestones = contract.milestones.filter(
+      (m) => m.id !== milestoneId,
+    );
+    const allCompleted = otherMilestones.every(
+      (m) => m.status === MilestoneStatus.COMPLETED,
+    );
+
+    const completedCount = otherMilestones.filter(
+      (m) => m.status === MilestoneStatus.COMPLETED,
+    ).length + 1; // +1 for current
+    const totalCount = contract.milestones.length;
+    const newProgress = Math.round((completedCount / totalCount) * 100);
+
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Mark milestone as COMPLETED
+      await tx.milestone.update({
+        where: { id: milestoneId },
+        data: {
+          status: MilestoneStatus.COMPLETED,
+          progressPercent: 100,
+          completedAt: new Date(),
+        },
+      });
+
+      // 2. Create Payment record (mock release)
+      await tx.payment.create({
+        data: {
+          contractId: contract.id,
+          milestoneId: milestoneId,
+          amount: milestoneAmount,
+          status: PaymentStatus.COMPLETED,
+          completedAt: new Date(),
+        },
+      });
+
+      // 3. Update contract escrowedAmount + progressPercent
+      await tx.contract.update({
+        where: { id: contract.id },
+        data: {
+          escrowedAmount: newEscrowedAmount,
+          progressPercent: newProgress,
+          ...(allCompleted && {
+            status: ContractStatus.COMPLETED,
+            endDate: new Date().toISOString().split('T')[0],
+          }),
+        },
+      });
+
+      // 4. Activate next milestone (if exists)
+      if (nextMilestone && !allCompleted) {
+        await tx.milestone.update({
+          where: { id: nextMilestone.id },
+          data: { status: MilestoneStatus.ACTIVE },
+        });
+      }
+
+      // 5. System message in chat
+      await tx.message.create({
+        data: {
+          contractId: contract.id,
+          senderId: userId,
+          senderName: 'Hệ thống',
+          type: MessageType.SYSTEM,
+          text: allCompleted
+            ? `🎉 Hợp đồng hoàn thành! Milestone cuối "${milestone.name}" đã được nghiệm thu. ${milestoneAmount.toLocaleString()} ADA đã được giải ngân.`
+            : `✅ Client đã nghiệm thu milestone "${milestone.name}". ${milestoneAmount.toLocaleString()} ADA đã được giải ngân cho Freelancer.`,
+          milestoneNote: milestone.name,
+        },
+      });
+    });
+
+    // 6. Notifications (outside transaction)
+    await this.notificationsService.create(
+      contract.freelancerId,
+      NotificationType.PAYMENT_RELEASED,
+      `💰 Thanh toán ${milestoneAmount.toLocaleString()} ADA`,
+      `Client đã nghiệm thu milestone "${milestone.name}" và giải ngân ${milestoneAmount.toLocaleString()} ADA cho bạn.`,
+      { contractId: contract.id, milestoneId: milestone.id },
+    );
+
+    if (allCompleted) {
+      await this.notificationsService.create(
+        contract.freelancerId,
+        NotificationType.NFT_MINTED,
+        '🏆 NFT Uy tín đã được đúc!',
+        `Hợp đồng "${contract.title}" hoàn thành xuất sắc. NFT chứng nhận on-chain đã được mint vào ví của bạn!`,
+        { contractId: contract.id },
+      );
+    }
+
+    await this.notificationsService.create(
+      contract.clientId,
+      NotificationType.MILESTONE_APPROVED,
+      'Milestone đã được xác nhận',
+      `Bạn đã nghiệm thu milestone "${milestone.name}". Thanh toán ${milestoneAmount.toLocaleString()} ADA đã hoàn tất.`,
+      { contractId: contract.id, milestoneId: milestone.id },
+    );
+
+    return this.getContractDetailShape(contract.id);
   }
 
   /** Helper to return the full ContractDetail shape for FE */
