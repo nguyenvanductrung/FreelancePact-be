@@ -31,10 +31,10 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   }
 
   async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
-    // Verify user still exists in DB (handles deleted/banned accounts)
+    // Verify user still exists in DB and get their latest role
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true },
+      select: { id: true, role: true },
     });
 
     if (!user) {
@@ -44,7 +44,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     return {
       userId: payload.sub,
       email: payload.email,
-      role: payload.role,
+      role: user.role, // This will be uppercase CLIENT or FREELANCER from database
     };
   }
 }

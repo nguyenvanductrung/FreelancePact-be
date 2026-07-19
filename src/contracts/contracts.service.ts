@@ -118,7 +118,7 @@ export class ContractsService {
     let freelancerId = userId;
     let clientId = userId;
 
-    if (userRole === 'freelancer') {
+    if (userRole.toLowerCase() === 'freelancer') {
       const mockClient = await this.prisma.user.findFirst({
         where: { role: Role.CLIENT },
       });

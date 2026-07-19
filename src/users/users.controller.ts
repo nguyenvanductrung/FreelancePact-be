@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Request, UseGuards, BadRequestException } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { UsersService } from './users.service';
@@ -28,5 +28,18 @@ export class UsersController {
     @Body() dto: UpdateProfileDto,
   ): Promise<UserProfileDto> {
     return this.usersService.updateProfile(req.user.userId, dto);
+  }
+
+  @Patch('me/role')
+  @ApiOperation({ summary: 'Chuyển đổi vai trò người dùng (client hoặc freelancer)' })
+  @ApiResponse({ status: 200, description: 'Chuyển đổi vai trò thành công' })
+  async switchRole(
+    @Request() req: any,
+    @Body('role') role: 'client' | 'freelancer',
+  ) {
+    if (role !== 'client' && role !== 'freelancer') {
+      throw new BadRequestException('Role must be client or freelancer');
+    }
+    return this.usersService.updateRole(req.user.userId, role);
   }
 }

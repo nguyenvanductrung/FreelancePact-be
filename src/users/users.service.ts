@@ -80,4 +80,16 @@ export class UsersService {
 
     return this.getProfile(userId);
   }
+
+  async updateRole(userId: string, role: "client" | "freelancer") {
+    const prismaRole = role === "client" ? "CLIENT" : "FREELANCER";
+    
+    // We update the role in User table
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { role: prismaRole as any },
+    });
+
+    return { success: true, role };
+  }
 }
