@@ -24,6 +24,10 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      exceptionFactory: (errors) => {
+        const { BadRequestException } = require('@nestjs/common');
+        return new BadRequestException(errors);
+      },
     }),
   );
 
