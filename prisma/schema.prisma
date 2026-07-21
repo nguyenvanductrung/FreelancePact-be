@@ -25,6 +25,24 @@ enum ContractStatus {
   DISPUTED
 }
 
+enum DisputeStatus {
+  OPEN
+  VOTING
+  RESOLVED
+}
+
+enum DisputeOutcome {
+  CLIENT_WINS
+  FREELANCER_WINS
+  SPLIT_EQUAL
+}
+
+enum VoteChoice {
+  CLIENT
+  FREELANCER
+  SPLIT
+}
+
 enum MilestoneStatus {
   PENDING
   ACTIVE
@@ -75,6 +93,8 @@ model User {
   avatarUrl                String?
   role                     Role     @default(CLIENT)
   isKycVerified            Boolean  @default(false)
+  isAdmin                  Boolean  @default(false)
+  walletPkh                String?  // Dùng cho admin hoặc user kết nối ví
   isOnline                 Boolean  @default(false)
   title                    String?
   location                 String?
@@ -98,6 +118,8 @@ model User {
   notifications        Notification[]
   jobs                 Job[]           @relation("ClientJobs")
   applications         Application[]   @relation("FreelancerApplications")
+  openedDisputes       Dispute[]       @relation("OpenedDisputes")
+  adminVotes           DisputeVote[]   @relation("AdminVotes")
 }
 
 model Contract {
@@ -122,6 +144,7 @@ model Contract {
   freelancer User      @relation("FreelancerContracts", fields: [freelancerId], references: [id])
   client     User      @relation("ClientContracts", fields: [clientId], references: [id])
   job        Job?      @relation("JobContract", fields: [jobId], references: [id])
+  dispute    Dispute?
   milestones Milestone[]
   messages   Message[]
   payments   Payment[]
@@ -261,6 +284,38 @@ model Application {
   @@unique([jobId, freelancerId]) // Mỗi Freelancer chỉ apply 1 lần cho mỗi Job
 }
 
+model Dispute {
+  id              String         @id @default(cuid())
+  contractId      String         @unique
+  openedById      String
+  reason          String
+  status          DisputeStatus  @default(OPEN)
+  outcome         DisputeOutcome?
+  onChainTxHash   String?
+  resolvedAt      DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  contract  Contract      @relation(fields: [contractId], references: [id])
+  openedBy  User          @relation("OpenedDisputes", fields: [openedById], references: [id])
+  votes     DisputeVote[]
+}
+
+model DisputeVote {
+  id             String     @id @default(cuid())
+  disputeId      String
+  adminId        String
+  choice         VoteChoice
+  comment        String?
+  partialSigCbor String?
+  createdAt      DateTime   @default(now())
+
+  dispute  Dispute  @relation(fields: [disputeId], references: [id])
+  admin    User     @relation("AdminVotes", fields: [adminId], references: [id])
+
+  @@unique([disputeId, adminId])
+}
+
 enum NotificationType {
   MILESTONE_SUBMITTED
   MILESTONE_APPROVED
@@ -271,6 +326,8 @@ enum NotificationType {
   NFT_MINTED
   NEW_APPLICATION // Freelancer vừa nộp đơn ứng tuyển vào Job của Client
   FREELANCER_SELECTED // Client đã chọn Freelancer và tạo Hợp đồng nháp
+  DISPUTE_VOTE_CAST
+  DISPUTE_RESOLVED
 }
 
 model Notification {

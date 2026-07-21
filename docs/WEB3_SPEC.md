@@ -47,13 +47,21 @@ Toàn bộ logic escrow (deposit, release, refund) được thực thi bởi **o
 
 ## 3. Luồng Giải quyết Tranh chấp (Dispute Resolution)
 
-Trong trường hợp có bất đồng giữa Client và Freelancer:
+Trong trường hợp có bất đồng giữa Client và Freelancer, hệ thống sử dụng cơ chế Multi-Signature (Đa chữ ký) kết hợp Mesh SDK và Aiken Validator:
 
-1. **Mở tranh chấp:** Một trong hai bên bấm nút `Dispute`. Tiền ADA tiếp tục bị khóa trong Escrow Validator.
-2. **Bỏ phiếu (Voting):**
-   - **MVP (giai đoạn đầu):** Sử dụng mô hình **Council Vote giả lập** — một nhóm admin accounts được chỉ định sẵn sẽ xem xét bằng chứng (tin nhắn, file đã nộp) và bỏ phiếu phân định. Giao diện vote được thiết kế giống DAO voting thực sự để sẵn sàng nâng cấp sau.
-   - **Tương lai (post-MVP):** Chuyển sang on-chain governance với token holder voting thực sự.
-3. **Thực thi:** Sau khi có kết quả bỏ phiếu, DAOPilot AI Agent build transaction gọi Aiken Validator với redeemer `ResolveDispute` kèm kết quả vote. **On-chain validator kiểm tra** kết quả vote hợp lệ (đủ số phiếu, chữ ký admin hợp lệ) rồi mới cho phép chuyển ADA cho bên thắng (hoặc chia theo tỷ lệ).
+1. **Mở tranh chấp (Open Dispute):**
+   - Một trong hai bên (Client hoặc Freelancer) yêu cầu mở tranh chấp trên giao diện.
+   - Frontend gọi Backend để tạo Unsigned Transaction (với redeemer là `OpenDispute`).
+   - Người dùng ký giao dịch bằng ví CIP-30 (Nami/Eternl). Trạng thái Datum on-chain của Escrow chuyển từ `Active` sang `Disputed`.
+2. **Bỏ phiếu (DAO Council Voting):**
+   - Một hội đồng (Council) gồm các Admin có quyền phân xử. Danh sách Public Key Hash (PKH) của Council được lưu trực tiếp trong Datum của Smart Contract để đảm bảo tính minh bạch on-chain.
+   - Các Admin truy cập Dashboard để xem xét bằng chứng và chọn 1 trong 3 phán quyết: `Hoàn tiền (Client)`, `Trả lương (Freelancer)` hoặc `Chia đôi (50/50)`.
+   - Mỗi lượt bỏ phiếu thực chất là quá trình Admin thực hiện **Ký một phần (Partial Sign)** lên một Unsigned Transaction phân xử do Backend cấp. Backend lưu lại chữ ký này (`partialSigCbor`).
+3. **Thực thi và Giải ngân (Resolve Dispute):**
+   - Backend theo dõi số lượng chữ ký cho cùng một phán quyết.
+   - Khi số lượng chữ ký đạt ngưỡng tối thiểu (Threshold, ví dụ: 2/3) quy định trong Datum, Backend dùng `MeshTxBuilder.mergeWitnesses` để gộp toàn bộ chữ ký của Admin.
+   - Backend sử dụng **Ví Platform** (ví server) để ký lần cuối nhằm trả phí mạng (fee) và submit giao dịch lên Blockfrost.
+   - **Bảo mật On-chain:** Validator Aiken tự động kiểm tra xem giao dịch có chứa đủ chữ ký hợp lệ của các Admin thuộc Council không và lượng ADA có được phân bổ đúng như quy định trong phán quyết không. Nếu đúng, ADA sẽ được giải phóng.
 
 ---
 
