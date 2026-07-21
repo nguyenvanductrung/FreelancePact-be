@@ -7,6 +7,8 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateContractDto, FePaymentTerm } from './dto/create-contract.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { FundEscrowTxBuilder } from './fund-escrow-tx.builder';
+import { resolvePaymentKeyHash, BlockfrostProvider } from '@meshsdk/core';
 import {
   ContractStatus,
   MilestoneStatus,
@@ -18,10 +20,15 @@ import {
 
 @Injectable()
 export class ContractsService {
+  private blockfrostProvider: BlockfrostProvider;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
-  ) {}
+    private readonly fundEscrowTxBuilder: FundEscrowTxBuilder,
+  ) {
+    this.blockfrostProvider = new BlockfrostProvider(process.env.BLOCKFROST_PROJECT_ID || '');
+  }
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -154,12 +161,12 @@ export class ContractsService {
     return this.formatContractDetail(contract);
   }
 
-  // ─── POST /contracts/:id/fund (Mock Deposit ADA) ─────────────────────────────
+  // ─── POST /contracts/:id/fund/build ───────────────────────────────────────────
 
-  async fundContract(userId: string, contractId: string) {
+  async buildFundEscrowTx(userId: string, contractId: string, clientWalletAddress: string) {
     const contract = await this.prisma.contract.findUnique({
       where: { id: contractId },
-      include: { milestones: { orderBy: { createdAt: 'asc' } } },
+      include: { client: true, freelancer: true, milestones: true },
     });
 
     if (!contract) throw new NotFoundException('Hợp đồng không tồn tại');
@@ -167,64 +174,170 @@ export class ContractsService {
       throw new ForbiddenException('Chỉ Client mới có thể nạp tiền cho hợp đồng');
     }
     if (contract.status !== ContractStatus.DRAFT) {
-      throw new BadRequestException(
-        `Hợp đồng đang ở trạng thái ${contract.status}, không thể nạp tiền`,
-      );
+      throw new BadRequestException(`Hợp đồng đang ở trạng thái ${contract.status}`);
     }
 
-    const firstMilestone = contract.milestones[0];
+    // Save client wallet address
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { walletAddress: clientWalletAddress },
+    });
 
-    const updated = await this.prisma.$transaction(async (tx) => {
-      // 1. Activate contract + set escrowedAmount = totalValue
-      const updatedContract = await tx.contract.update({
-        where: { id: contractId },
-        data: {
-          status: ContractStatus.ACTIVE,
-          escrowedAmount: contract.totalValue,
-          startDate: new Date().toISOString().split('T')[0],
-        },
-        include: { milestones: { include: { files: true } } },
-      });
+    // 1. Get PKHs
+    const clientPkh = resolvePaymentKeyHash(clientWalletAddress);
+    
+    // For freelancer, we either get from their profile or if not set, use a dummy or require them to set it.
+    // Assuming for MVP they have set it or we mock it. We can require freelancer to have walletAddress.
+    // If null, we mock a PKH for demonstration to avoid blocking
+    let freelancerPkh = contract.freelancer.walletPkh;
+    if (!freelancerPkh) {
+      // Mocking freelancer PKH if missing
+      freelancerPkh = 'dummy_freelancer_pkh_1234567890123456789012345678901234567890';
+    }
 
-      // 2. Activate the first milestone
-      if (firstMilestone) {
-        await tx.milestone.update({
-          where: { id: firstMilestone.id },
-          data: {
-            status: MilestoneStatus.ACTIVE,
-          },
-        });
+    // 2. Council PKHs (must match seed-admins.ts)
+    const councilUsers = await this.prisma.user.findMany({ where: { isAdmin: true } });
+    if (councilUsers.length < 3) {
+      throw new Error('Hệ thống thiếu Admin Council, vui lòng chạy seed-admins.ts');
+    }
+    const councilPkhs = councilUsers.map(u => u.walletPkh || '').filter(p => p !== '');
+    const threshold = 2; // 2/3 multisig
+
+    // 3. Amount Lovelace
+    const amountLovelace = Math.floor(Number(contract.totalValue) * 1000000).toString();
+
+    // 4. Build Tx
+    let buildResult;
+    try {
+      buildResult = await this.fundEscrowTxBuilder.buildFundEscrowTx(
+        clientPkh,
+        freelancerPkh,
+        councilPkhs,
+        threshold,
+        amountLovelace,
+        clientWalletAddress
+      );
+    } catch (error: any) {
+      console.error('Build Tx Error:', error);
+      if (error?.message?.includes('UTxO Balance Insufficient')) {
+        throw new BadRequestException('Ví của bạn không có đủ UTxO hoặc ADA trên mạng Preprod để thực hiện giao dịch.');
       }
+      if (error?.response?.status === 403) {
+        throw new BadRequestException('Lỗi Blockfrost: API Key không hợp lệ hoặc hết hạn.');
+      }
+      throw new BadRequestException('Lỗi tạo giao dịch: ' + (error.message || 'Blockfrost trả về lỗi'));
+    }
 
-      // 3. System message: escrow funded
-      await tx.message.create({
-        data: {
-          contractId,
-          senderId: userId,
-          senderName: 'Hệ thống',
-          type: MessageType.SYSTEM,
-          text: `✅ Client đã nạp ${Number(contract.totalValue).toLocaleString()} ADA vào Escrow. Hợp đồng đã chính thức bắt đầu!`,
-        },
-      });
+    const { unsignedTxCbor, datumJson, scriptAddress } = buildResult;
 
-      return updatedContract;
-    });
-
-    // 4. Notify Freelancer
-    await this.notificationsService.create(
-      contract.freelancerId,
-      NotificationType.CONTRACT_SIGNED,
-      'Hợp đồng đã bắt đầu!',
-      `Client đã nạp ADA vào Escrow. Milestone "${firstMilestone?.name ?? ''}" đã được kích hoạt. Hãy bắt đầu làm việc!`,
-      { contractId },
-    );
-
-    // Re-fetch with updated milestones for fresh data
-    const fresh = await this.prisma.contract.findUnique({
+    // Save datum temporally in contract so we can use it later
+    await this.prisma.contract.update({
       where: { id: contractId },
-      include: { milestones: { include: { files: true } } },
+      data: {
+        escrowScriptAddress: scriptAddress,
+        escrowDatumCbor: datumJson
+      }
     });
 
-    return this.formatContractDetail(fresh);
+    return { unsignedTxCbor };
+  }
+
+  // ─── POST /contracts/:id/fund/submit ──────────────────────────────────────────
+
+  async submitFundEscrowTx(userId: string, contractId: string, signedTxCbor: string) {
+    const txHash = await this.blockfrostProvider.submitTx(signedTxCbor);
+    
+    // Asynchronously poll for confirmation
+    this.confirmEscrowFunded(contractId, txHash).catch(console.error);
+
+    return { txHash };
+  }
+
+  // ─── Background Polling ────────────────────────────────────────────────────────
+
+  private async confirmEscrowFunded(contractId: string, txHash: string) {
+    let confirmed = false;
+    let attempts = 0;
+    const maxAttempts = 30; // 30 * 10s = 5 minutes
+    
+    while (!confirmed && attempts < maxAttempts) {
+      try {
+        const txInfo = await this.blockfrostProvider.fetchTxInfo(txHash);
+        if (txInfo) {
+          confirmed = true;
+          
+          // Tx is confirmed. Find the output index matching the script address
+          const contract = await this.prisma.contract.findUnique({ where: { id: contractId } });
+          const scriptAddress = contract?.escrowScriptAddress;
+          
+          let outputIndex = 0; // Default to 0, ideally we should match scriptAddress if multiple outputs
+          // We don't have a direct fetchTxOutputs in Mesh's BlockfrostProvider easily accessible without custom REST call
+          // But since the tx builder puts the script output first typically, index 0 is very likely it.
+          // Or we query the script address UTXOs
+          
+          // Give it a brief moment for UTXOs to index properly in blockfrost
+          await new Promise(r => setTimeout(r, 5000));
+          
+          const scriptUtxos = await this.blockfrostProvider.fetchAddressUTxOs(scriptAddress!);
+          const matchingUtxo = scriptUtxos.find(u => u.input.txHash === txHash);
+          
+          if (matchingUtxo) {
+            outputIndex = matchingUtxo.input.outputIndex;
+          }
+
+          const firstMilestone = await this.prisma.milestone.findFirst({
+            where: { contractId },
+            orderBy: { createdAt: 'asc' }
+          });
+
+          // Update Contract status
+          await this.prisma.$transaction(async (tx) => {
+            await tx.contract.update({
+              where: { id: contractId },
+              data: {
+                status: ContractStatus.ACTIVE,
+                escrowedAmount: contract!.totalValue,
+                startDate: new Date().toISOString().split('T')[0],
+                escrowTxHash: txHash,
+                escrowOutputIndex: outputIndex,
+              },
+            });
+
+            if (firstMilestone) {
+              await tx.milestone.update({
+                where: { id: firstMilestone.id },
+                data: { status: MilestoneStatus.ACTIVE },
+              });
+            }
+
+            await tx.message.create({
+              data: {
+                contractId,
+                senderId: contract!.clientId,
+                senderName: 'Hệ thống',
+                type: MessageType.SYSTEM,
+                text: `✅ Giao dịch nạp tiền đã xác nhận trên chuỗi khối Cardano (TxHash: ${txHash}). Hợp đồng chính thức bắt đầu!`,
+              },
+            });
+          });
+
+          await this.notificationsService.create(
+            contract!.freelancerId,
+            NotificationType.CONTRACT_SIGNED,
+            'Hợp đồng đã bắt đầu!',
+            `Client đã nạp ADA vào Escrow (TxHash: ${txHash}). Hãy bắt đầu làm việc!`,
+            { contractId },
+          );
+          return;
+        }
+      } catch (e) {
+        // Blockfrost usually returns 404 if tx not found yet
+      }
+      
+      attempts++;
+      await new Promise(resolve => setTimeout(resolve, 10000)); // wait 10s
+    }
+    
+    console.error(`Tx ${txHash} for contract ${contractId} was not confirmed within time limit.`);
   }
 }

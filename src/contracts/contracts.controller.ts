@@ -50,11 +50,17 @@ export class ContractsController {
     return this.contractsService.getContractById(req.user.userId, id);
   }
 
-  @Post(':id/fund')
-  @ApiOperation({ summary: 'Client nạp ADA vào Escrow (Mock Phase 1)' })
-  @ApiResponse({ status: 200, description: 'Nạp tiền thành công, Contract → ACTIVE' })
-  @ApiResponse({ status: 403, description: 'Chỉ Client mới được nạp tiền' })
-  async fundContract(@Request() req: any, @Param('id') id: string) {
-    return this.contractsService.fundContract(req.user.userId, id);
+  @Post(':id/fund/build')
+  @ApiOperation({ summary: 'Client khởi tạo giao dịch nạp ADA vào Escrow' })
+  @ApiResponse({ status: 200, description: 'Trả về unsignedTxCbor' })
+  async buildFundTx(@Request() req: any, @Param('id') id: string, @Body() body: { clientWalletAddress: string }) {
+    return this.contractsService.buildFundEscrowTx(req.user.userId, id, body.clientWalletAddress);
+  }
+
+  @Post(':id/fund/submit')
+  @ApiOperation({ summary: 'Client submit giao dịch đã ký' })
+  @ApiResponse({ status: 200, description: 'Trả về txHash' })
+  async submitFundTx(@Request() req: any, @Param('id') id: string, @Body() body: { signedTxCbor: string }) {
+    return this.contractsService.submitFundEscrowTx(req.user.userId, id, body.signedTxCbor);
   }
 }

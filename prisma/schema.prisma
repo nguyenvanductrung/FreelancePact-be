@@ -94,7 +94,8 @@ model User {
   role                     Role     @default(CLIENT)
   isKycVerified            Boolean  @default(false)
   isAdmin                  Boolean  @default(false)
-  walletPkh                String?  // Dùng cho admin hoặc user kết nối ví
+  walletPkh                String?  // Dùng cho admin hoặc user kết nối ví (PKH)
+  walletAddress            String?  // Địa chỉ ví đầy đủ (bech32)
   isOnline                 Boolean  @default(false)
   title                    String?
   location                 String?
@@ -138,6 +139,10 @@ model Contract {
   freelancerId    String
   clientId        String
   jobId           String?        @unique // Nguồn gốc từ Job (nullable: Contract có thể tạo trực tiếp)
+  escrowTxHash        String?
+  escrowOutputIndex   Int?
+  escrowScriptAddress String?
+  escrowDatumCbor     String?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 

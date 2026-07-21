@@ -21,6 +21,10 @@ export class DisputesService {
   async openDispute(contractId: string, userId: string, reason: string, signerAddress: string) {
     const contract = await this.prisma.contract.findUnique({ where: { id: contractId } });
     if (!contract) throw new NotFoundException('Contract not found');
+    
+    if (!contract.escrowTxHash || !contract.escrowDatumCbor || !contract.escrowScriptAddress) {
+      throw new BadRequestException('Contract is missing on-chain escrow information');
+    }
 
     const dispute = await this.prisma.dispute.create({
       data: {
@@ -36,42 +40,92 @@ export class DisputesService {
       data: { status: 'DISPUTED' },
     });
 
-    // Dummy values for UTXO and newDatum to pass to txBuilder for now
-    // In reality, we'd query blockfrost for the script UTXO
-    const dummyUtxo = { input: { txHash: '...', outputIndex: 0 }, output: { amount: [], address: '...' } };
-    const dummyDatum = { /* construct new datum with state=Disputed */ };
-    const scriptAddress = 'addr_test1...';
+    const escrowLovelace = Math.floor(Number(contract.totalValue) * 1000000).toString();
+    const utxo = {
+      input: { txHash: contract.escrowTxHash, outputIndex: contract.escrowOutputIndex },
+      output: { 
+        amount: [{ unit: 'lovelace', quantity: escrowLovelace }], 
+        address: contract.escrowScriptAddress 
+      }
+    };
 
-    // Build the unsigned tx
-    const unsignedTxCbor = await this.txBuilder.buildOpenDisputeTx(dummyUtxo, dummyDatum, signerAddress, scriptAddress);
+    const oldDatum = JSON.parse(contract.escrowDatumCbor);
+    const newDatum = {
+      alternative: 0,
+      fields: [
+        oldDatum.fields[0],
+        oldDatum.fields[1],
+        oldDatum.fields[2],
+        oldDatum.fields[3],
+        oldDatum.fields[4],
+        { alternative: 1, fields: [] } // state = Disputed
+      ]
+    };
+
+    // Update datum in DB since it will change after open dispute
+    // Wait, the tx needs to be submitted first. We shouldn't update DB yet.
+    // However, the FE will submit the tx.
+
+    const unsignedTxCbor = await this.txBuilder.buildOpenDisputeTx(
+      utxo, 
+      newDatum, 
+      signerAddress, 
+      contract.escrowScriptAddress
+    );
 
     return { dispute, unsignedTxCbor };
   }
 
   async vote(disputeId: string, adminId: string, choice: any, comment?: string) {
+    const dispute = await this.prisma.dispute.findUnique({
+      where: { id: disputeId },
+      include: { contract: { include: { client: true, freelancer: true } } }
+    });
+    if (!dispute) throw new NotFoundException('Dispute not found');
+    
+    const contract = dispute.contract;
+    if (!contract.escrowTxHash || !contract.escrowScriptAddress) {
+      throw new BadRequestException('Contract missing on-chain info');
+    }
+
     const vote = await this.prisma.disputeVote.upsert({
       where: { disputeId_adminId: { disputeId, adminId } },
       update: { choice, comment },
       create: { disputeId, adminId, choice, comment },
     });
     
-    // Build unsigned tx for this specific outcome choice
     const outcomeIndex = choice === 'CLIENT' ? 0 : choice === 'FREELANCER' ? 1 : 2;
-    // In reality, we fetch all these from Blockfrost and DB
-    const dummyUtxo = { input: { txHash: '...', outputIndex: 0 }, output: { amount: [], address: '...' } };
     
-    // We need all admin PKHs for the redeemer list
+    const escrowLovelace = Math.floor(Number(contract.totalValue) * 1000000).toString();
+    const utxo = {
+      input: { txHash: contract.escrowTxHash, outputIndex: contract.escrowOutputIndex },
+      output: { 
+        amount: [{ unit: 'lovelace', quantity: escrowLovelace }], 
+        address: contract.escrowScriptAddress 
+      }
+    };
+    
     const admins = await this.prisma.user.findMany({ where: { isAdmin: true } });
     const voterPkhs = admins.map(a => a.walletPkh).filter(Boolean) as string[];
 
-    // Define payouts based on choice and contract escrow value
-    const payouts = [{ address: 'dummy_winner_addr', amount: '10000000' }]; // TODO: fetch from contract
+    let payouts = [];
+    if (choice === 'CLIENT') {
+      payouts = [{ address: contract.client.walletAddress || '', amount: escrowLovelace }];
+    } else if (choice === 'FREELANCER') {
+      payouts = [{ address: contract.freelancer.walletAddress || '', amount: escrowLovelace }];
+    } else {
+      const half = Math.floor(Number(escrowLovelace) / 2).toString();
+      payouts = [
+        { address: contract.client.walletAddress || '', amount: half },
+        { address: contract.freelancer.walletAddress || '', amount: half }
+      ];
+    }
 
     const unsignedTxCbor = await this.txBuilder.assembleAndSubmitResolveDispute(
-      dummyUtxo,
+      utxo,
       { voterPkhs, outcomeIndex, payouts },
-      [], // No partial sigs yet, just building unsigned tx
-      'dummy_script_addr'
+      [], // Building unsigned tx
+      contract.escrowScriptAddress
     );
 
     return {
@@ -81,39 +135,69 @@ export class DisputesService {
   }
 
   async submitPartialSig(disputeId: string, voteId: string, partialSigCbor: string) {
+    const dispute = await this.prisma.dispute.findUnique({
+      where: { id: disputeId },
+      include: { contract: { include: { client: true, freelancer: true } } }
+    });
+    if (!dispute) throw new NotFoundException('Dispute not found');
+    const contract = dispute.contract;
+
     const vote = await this.prisma.disputeVote.update({
       where: { id: voteId },
       data: { partialSigCbor },
     });
 
-    // Check if threshold reached (e.g. 2 votes for the SAME choice)
     const allVotes = await this.prisma.disputeVote.findMany({
       where: { disputeId, choice: vote.choice, partialSigCbor: { not: null } }
     });
 
-    const threshold = 2; // In reality, get from contract datum
+    const threshold = 2; // Usually parsed from datum, hardcoded here for simplicity
 
     if (allVotes.length >= threshold) {
-      // We have enough signatures! Submit the tx
       const outcomeIndex = vote.choice === 'CLIENT' ? 0 : vote.choice === 'FREELANCER' ? 1 : 2;
-      const dummyUtxo = { input: { txHash: '...', outputIndex: 0 }, output: { amount: [], address: '...' } };
+      const escrowLovelace = Math.floor(Number(contract.totalValue) * 1000000).toString();
+      const utxo = {
+        input: { txHash: contract.escrowTxHash, outputIndex: contract.escrowOutputIndex },
+        output: { 
+          amount: [{ unit: 'lovelace', quantity: escrowLovelace }], 
+          address: contract.escrowScriptAddress! 
+        }
+      };
+
       const admins = await this.prisma.user.findMany({ where: { isAdmin: true } });
       const voterPkhs = admins.map(a => a.walletPkh).filter(Boolean) as string[];
-      const payouts = [{ address: 'dummy_winner_addr', amount: '10000000' }];
+
+      let payouts = [];
+      if (vote.choice === 'CLIENT') {
+        payouts = [{ address: contract.client.walletAddress || '', amount: escrowLovelace }];
+      } else if (vote.choice === 'FREELANCER') {
+        payouts = [{ address: contract.freelancer.walletAddress || '', amount: escrowLovelace }];
+      } else {
+        const half = Math.floor(Number(escrowLovelace) / 2).toString();
+        payouts = [
+          { address: contract.client.walletAddress || '', amount: half },
+          { address: contract.freelancer.walletAddress || '', amount: half }
+        ];
+      }
+
       const sigs = allVotes.map(v => v.partialSigCbor as string);
 
       try {
         const txHash = await this.txBuilder.assembleAndSubmitResolveDispute(
-          dummyUtxo,
+          utxo,
           { voterPkhs, outcomeIndex, payouts },
           sigs,
-          'dummy_script_addr'
+          contract.escrowScriptAddress!
         );
 
-        // Update dispute status
         await this.prisma.dispute.update({
           where: { id: disputeId },
           data: { status: 'RESOLVED', onChainTxHash: txHash, resolvedAt: new Date() }
+        });
+        
+        await this.prisma.contract.update({
+          where: { id: contract.id },
+          data: { status: 'COMPLETED' } // Mark completed after dispute resolution
         });
 
         return { success: true, txHash, resolved: true };
