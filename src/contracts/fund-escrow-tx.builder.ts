@@ -39,23 +39,26 @@ export class FundEscrowTxBuilder {
     //   escrow_lovelace: Int,
     //   state: EscrowState (Active = 0)
     // }
-    const datum = {
-      alternative: 0,
+    const datum: any = {
+      constructor: 0,
       fields: [
         { bytes: clientPkh },
         { bytes: freelancerPkh },
         { list: councilPkhs.map(pkh => ({ bytes: pkh })) },
         { int: threshold },
         { int: Number(amountLovelace) },
-        { alternative: 0, fields: [] }
+        { constructor: 0, fields: [] }
       ]
     };
 
-    const tx = new MeshTxBuilder({ fetcher: this.blockfrostProvider, evaluator: this.blockfrostProvider });
-    
+    // Deposit tx: chỉ cần fetcher để lấy UTxOs
+    // KHÔNG truyền evaluator — evaluator chỉ dùng khi spending từ script (cần redeemer)
+    // Truyền evaluator sẽ khiến MeshJS cố evaluate Plutus script và báo lỗi BigInt
+    const tx = new MeshTxBuilder({ fetcher: this.blockfrostProvider });
+
     await tx
       .txOut(this.scriptAddress, [{ unit: 'lovelace', quantity: amountLovelace }])
-      .txOutInlineDatumValue(datum)
+      .txOutInlineDatumValue(datum, 'JSON')
       .changeAddress(clientWalletAddress)
       .selectUtxosFrom(await this.blockfrostProvider.fetchAddressUTxOs(clientWalletAddress))
       .complete();

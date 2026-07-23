@@ -52,4 +52,9 @@ export class UpdateProfileDto {
   @IsArray()
   @IsString({ each: true })
   skills?: string[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  walletAddress?: string;
 }

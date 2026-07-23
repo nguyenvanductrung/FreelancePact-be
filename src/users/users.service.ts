@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UserProfileDto } from './dto/user-profile.dto';
@@ -73,9 +73,20 @@ export class UsersService {
     // Make sure user exists
     await this.getProfile(userId);
 
+    const dataToUpdate: any = { ...dto };
+    if (dto.walletAddress) {
+      try {
+        // We dynamically import it or use it if already imported
+        const { resolvePaymentKeyHash } = require('@meshsdk/core');
+        dataToUpdate.walletPkh = resolvePaymentKeyHash(dto.walletAddress);
+      } catch (e) {
+        throw new BadRequestException('Địa chỉ ví không hợp lệ');
+      }
+    }
+
     await this.prisma.user.update({
       where: { id: userId },
-      data: dto,
+      data: dataToUpdate,
     });
 
     return this.getProfile(userId);

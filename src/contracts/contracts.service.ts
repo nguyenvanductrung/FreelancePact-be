@@ -177,22 +177,30 @@ export class ContractsService {
       throw new BadRequestException(`Hợp đồng đang ở trạng thái ${contract.status}`);
     }
 
-    // Save client wallet address
+    // Save client wallet address and PKH
+    let clientPkhToSave: string;
+    try {
+      clientPkhToSave = resolvePaymentKeyHash(clientWalletAddress);
+    } catch (error) {
+      throw new BadRequestException('Địa chỉ ví Client không hợp lệ. Vui lòng kiểm tra lại.');
+    }
+    
     await this.prisma.user.update({
       where: { id: userId },
-      data: { walletAddress: clientWalletAddress },
+      data: { 
+        walletAddress: clientWalletAddress,
+        walletPkh: clientPkhToSave 
+      },
     });
 
     // 1. Get PKHs
-    const clientPkh = resolvePaymentKeyHash(clientWalletAddress);
+    const clientPkh = clientPkhToSave;
     
-    // For freelancer, we either get from their profile or if not set, use a dummy or require them to set it.
-    // Assuming for MVP they have set it or we mock it. We can require freelancer to have walletAddress.
-    // If null, we mock a PKH for demonstration to avoid blocking
-    let freelancerPkh = contract.freelancer.walletPkh;
+    // For freelancer, they MUST have a wallet connected to receive funds.
+    // If we use a dummy PKH, the funds will be lost and the freelancer cannot claim them.
+    const freelancerPkh = contract.freelancer.walletPkh;
     if (!freelancerPkh) {
-      // Mocking freelancer PKH if missing
-      freelancerPkh = 'dummy_freelancer_pkh_1234567890123456789012345678901234567890';
+      throw new BadRequestException('Freelancer chưa cập nhật địa chỉ ví (PKH). Vui lòng yêu cầu Freelancer kết nối ví trước khi nạp tiền để đảm bảo họ có thể nhận thanh toán.');
     }
 
     // 2. Council PKHs (must match seed-admins.ts)
@@ -207,6 +215,12 @@ export class ContractsService {
     const amountLovelace = Math.floor(Number(contract.totalValue) * 1000000).toString();
 
     // 4. Build Tx
+    console.log('[fund/build] clientPkh:', clientPkh);
+    console.log('[fund/build] freelancerPkh:', freelancerPkh);
+    console.log('[fund/build] councilPkhs:', councilPkhs);
+    console.log('[fund/build] amountLovelace:', amountLovelace);
+    console.log('[fund/build] clientWalletAddress:', clientWalletAddress);
+
     let buildResult;
     try {
       buildResult = await this.fundEscrowTxBuilder.buildFundEscrowTx(
@@ -218,14 +232,16 @@ export class ContractsService {
         clientWalletAddress
       );
     } catch (error: any) {
-      console.error('Build Tx Error:', error);
-      if (error?.message?.includes('UTxO Balance Insufficient')) {
+      console.error('[fund/build] Build Tx Error FULL:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+      console.error('[fund/build] Error message:', error?.message);
+      console.error('[fund/build] Error stack:', error?.stack);
+      if (error?.message?.includes('UTxO Balance Insufficient') || error?.message?.includes('Insufficient')) {
         throw new BadRequestException('Ví của bạn không có đủ UTxO hoặc ADA trên mạng Preprod để thực hiện giao dịch.');
       }
-      if (error?.response?.status === 403) {
+      if (error?.response?.status === 403 || error?.message?.includes('403')) {
         throw new BadRequestException('Lỗi Blockfrost: API Key không hợp lệ hoặc hết hạn.');
       }
-      throw new BadRequestException('Lỗi tạo giao dịch: ' + (error.message || 'Blockfrost trả về lỗi'));
+      throw new BadRequestException('Lỗi tạo giao dịch: ' + (error.message || JSON.stringify(error)));
     }
 
     const { unsignedTxCbor, datumJson, scriptAddress } = buildResult;
